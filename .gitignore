@@ -1,0 +1,10 @@
+.venv/
+.venv-*/
+.cache/
+__pycache__/
+data/*
+!data/.gitkeep
+outputs/*
+!outputs/.gitkeep
+logs/*
+!logs/.gitkeep

@@ -1,0 +1,7 @@
+torch>=2.2.0
+torchvision
+transformers>=4.45.0
+accelerate>=0.25.0
+datasets>=2.18.0
+peft>=0.13.0
+pillow

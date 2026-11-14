@@ -1,36 +1,51 @@
-#!/bin/bash
-#SBATCH -J qwen15b_lora_dolly_meluxina
+#!/bin/bash -l
+#SBATCH -J qwen2vl_lora_vqarad_meluxina
 #SBATCH -A <account>
-#SBATCH -p GPU
-#SBATCH --qos test
+#SBATCH -p gpu
+#SBATCH --qos test               # test QOS: short queue time, short jobs. Use "default" for long jobs
 #SBATCH -N 1
-#SBATCH --gpus-per-node=4
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=96G
-#SBATCH -t 00:35:00
+#SBATCH -n 1                     # ONE task, accelerate starts one process per GPU itself
+#SBATCH --gpus=4                 # a MeluXina GPU node has 4 x A100 (40 GB)
+#SBATCH --cpus-per-task=32       # 8 cores per GPU
+#SBATCH --mem=120G
+#SBATCH -t 00:30:00
 #SBATCH -o logs/%x_%j.out
-#SBATCH -e logs/%x_%j.err
 
-module purge
-ml env/release/2024.1 CUDA Python
+# Submit from the repository folder: sbatch run_meluxina.slurm
+
+# The model to fine-tune. Any image-text-to-text model on the HF hub should work,
+# e.g. Qwen/Qwen2.5-VL-3B-Instruct or HuggingFaceTB/SmolVLM2-2.2B-Instruct (see README).
+MODEL=Qwen/Qwen2-VL-2B-Instruct
+
+# On MeluXina the modules only exist on the compute nodes, so the venv has to
+# be created inside a job / interactive session first (see README).
+module load PyTorch
 source .venv/bin/activate
 
-#Possibly install dependencies here
-#pip install -r requirements.txt
-
+# Clone the repo in your project folder (NOT in $HOME) so the cache ends up there.
 export HF_HOME=${SCRATCH:-$PWD}/.cache/huggingface
-export TRANSFORMERS_CACHE=$HF_HOME
 export HF_DATASETS_CACHE=$HF_HOME
+export HF_HUB_CACHE=$HF_HOME
 
+export TOKENIZERS_PARALLELISM=false
 export NCCL_DEBUG=WARN
-#export NCCL_ASYNC_ERROR_HANDLING=1
-#export CUDA_LAUNCH_BLOCKING=0
 
-#export MASTER_ADDR=$(hostname)
-#export MASTER_PORT=$((12000 + RANDOM % 20000))
+python tools/check_env.py
 
-# You don't need prefetching but for compatibility with Leonardo you may want to
-python tools/prep_dolly.py --max_train_samples 8000 --max_val_samples 800
+# MeluXina compute nodes have internet, so we can fetch model and data here.
+# It is a no-op if they are already there.
+python tools/prefetch.py --model_name ${MODEL}
 
-# Example accelerate launch
-accelerate launch   --multi_gpu   --num_processes ${SLURM_GPUS_ON_NODE}   --num_machines 1   src/train.py   --bf16   --output_dir outputs/qwen15b_lora_dolly_meluxina   --per_device_batch_size 6   --epochs 1   --num_workers 8
+# One process per GPU. Each process has its own DataLoader workers, so share the
+# cores between them and leave one per process for the main thread.
+NUM_GPUS=${SLURM_GPUS}
+WORKERS=$(( SLURM_CPUS_PER_TASK / NUM_GPUS - 1 ))
+
+accelerate launch --multi_gpu --num_processes ${NUM_GPUS} --num_machines 1 \
+    src/train.py \
+    --model_name ${MODEL} \
+    --bf16 \
+    --output_dir outputs/$(basename ${MODEL})_lora_vqarad_meluxina \
+    --per_device_batch_size 4 \
+    --epochs 6 \
+    --num_workers ${WORKERS}
